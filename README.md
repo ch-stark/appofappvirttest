@@ -1,6 +1,6 @@
 # ACM 2.16 App-of-Apps with OpenShift Virtualization (Pull Model)
 
-This tutorial demonstrates an **App-of-Apps pattern** using Red Hat Advanced Cluster Management (RHACM) 2.16 and OpenShift GitOps (ArgoCD) to deploy a VirtualMachine to a managed cluster via the **GitOps Pull Model**.
+This tutorial (WIP) demonstrates an **App-of-Apps pattern** using Red Hat Advanced Cluster Management (RHACM) 2.16 and OpenShift GitOps (ArgoCD) to deploy a VirtualMachine to a managed cluster via the **GitOps Pull Model**.  
 
 ## Architecture
 
