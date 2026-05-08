@@ -346,66 +346,6 @@ spec:
 
 ---
 
-## Protection Layer 7: ACM Policy — Last Resort Auto-Remediation
-
-**Protects against:** VM somehow deleted despite all other protections
-
-If the VM disappears for any reason, this ACM Policy detects it and recreates it.
-Set `remediationAction: inform` if you only want alerting without auto-recreation.
-
-**Deploy to:** hub cluster
-
-```yaml
-apiVersion: policy.open-cluster-management.io/v1
-kind: Policy
-metadata:
-  name: vm-must-exist
-  namespace: openshift-gitops
-  annotations:
-    policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CM Configuration Management
-    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
-spec:
-  remediationAction: enforce
-  disabled: false
-  policy-templates:
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: vm-must-exist
-        spec:
-          remediationAction: enforce
-          severity: critical
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: kubevirt.io/v1
-                kind: VirtualMachine
-                metadata:
-                  name: fedora-gitops-demo
-                  namespace: virt-demo
-                spec:
-                  running: true
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: vm-must-exist-binding
-  namespace: openshift-gitops
-spec:
-  placementRef:
-    apiGroup: cluster.open-cluster-management.io
-    kind: Placement
-    name: vm-managed-clusters
-  subjects:
-    - apiGroup: policy.open-cluster-management.io
-      kind: Policy
-      name: vm-must-exist
-```
-
----
-
 ## Summary
 
 | Layer | What | Protects Against | Recovery Time |
@@ -416,8 +356,7 @@ spec:
 | 4 | `Delete=false` on VM | ArgoCD prune/sync deleting VM | Instant (ArgoCD skips deletion) |
 | 5 | ValidatingAdmissionPolicy on namespace | `oc delete ns virt-demo` | Instant (API rejects the call) |
 | 6 | ValidatingAdmissionPolicy on VM | `oc delete vm` by any user | Instant (API rejects the call) |
-| 7 | ACM Policy enforce | Any deletion that bypasses above | Seconds (policy controller recreates) |
 
 **Recommended minimum:** Layers 1 + 2 + 3 + 4 (all ArgoCD/Placement level, no extra operators needed).
 
-**Full protection:** All 7 layers for defense in depth.
+**Full protection:** All 6 layers for defense in depth.
