@@ -247,34 +247,7 @@ guarantees the VM survives no matter what.
 
 ---
 
-## Protection Layer 4: ArgoCD Delete=false on the VM Resource
-
-**Protects against:** ArgoCD pruning or deleting the VM during any sync operation
-
-This annotation on the VM itself tells ArgoCD to never delete this specific resource,
-regardless of Application-level prune or delete settings.
-
-**What to change in `vm-workload/virtualmachine.yaml`:**
-
-```yaml
-apiVersion: kubevirt.io/v1
-kind: VirtualMachine
-metadata:
-  name: fedora-gitops-demo
-  namespace: virt-demo
-  labels:
-    app: fedora-gitops-demo
-    app.kubernetes.io/managed-by: argocd
-  annotations:
-    argocd.argoproj.io/sync-options: Delete=false   # ADD — ArgoCD will never delete this
-spec:
-  running: true
-  # ... rest unchanged
-```
-
----
-
-## Protection Layer 5: Block Namespace Deletion (ValidatingAdmissionPolicy)
+## Protection Layer 4: Block Namespace Deletion (ValidatingAdmissionPolicy)
 
 **Protects against:** `oc delete ns virt-demo` cascade-deleting all resources including VMs
 
@@ -315,7 +288,7 @@ spec:
 
 ---
 
-## Protection Layer 6: Block Direct VM Deletion (ValidatingAdmissionPolicy)
+## Protection Layer 5: Block Direct VM Deletion (ValidatingAdmissionPolicy)
 
 **Protects against:** `oc delete vm fedora-gitops-demo -n virt-demo` by any user
 
@@ -363,10 +336,9 @@ spec:
 | 1 | `preserveResourcesOnDeletion` on root (both AppSet-level + template-level) | Root AppSet deletion cascade | Instant (Applications + resources left in place) |
 | 2 | `preserveResourcesOnDeletion` on child (both levels) + `prune: false` | Child AppSet deletion cascade + Git removal | Instant (Applications + VMs left in place) |
 | 3 | Placement tolerations (4h timeout) | Cluster unreachable/unavailable + hub upgrade | Instant (cluster stays selected for 4h, then Layer 2 takes over) |
-| 4 | `Delete=false` on VM | ArgoCD prune/sync deleting VM | Instant (ArgoCD skips deletion) |
-| 5 | ValidatingAdmissionPolicy on namespace | `oc delete ns virt-demo` | Instant (API rejects the call) |
-| 6 | ValidatingAdmissionPolicy on VM | `oc delete vm` by any user | Instant (API rejects the call) |
+| 4 | ValidatingAdmissionPolicy on namespace | `oc delete ns virt-demo` | Instant (API rejects the call) |
+| 5 | ValidatingAdmissionPolicy on VM | `oc delete vm` by any user | Instant (API rejects the call) |
 
-**Recommended minimum:** Layers 1 + 2 + 3 + 4 (all ArgoCD/Placement level, no extra operators needed).
+**Recommended minimum:** Layers 1 + 2 + 3 (ArgoCD/Placement level, no extra operators needed).
 
-**Full protection:** All 6 layers for defense in depth.
+**Full protection:** All 5 layers for defense in depth.
