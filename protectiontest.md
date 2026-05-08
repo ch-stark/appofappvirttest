@@ -31,6 +31,53 @@ Managed cluster loses connectivity
         → cascade-delete of VM workload
 ```
 
+### Chain 4: Hub cluster temporarily unavailable (e.g. during upgrade)
+
+```
+Hub cluster upgrade begins
+  → ACM controllers, ArgoCD AppSet controller, pull model controller go down
+    → Hub comes back, sees stale state, re-evaluates Placements
+      → Managed clusters may appear unreachable during hub restart window
+        → Placement de-selects clusters before connectivity fully restores
+          → ApplicationSet removes Applications → cascade-delete of VMs
+```
+
+### The Toleration Timeout Dilemma
+
+Setting Placement tolerations **without a timeout** (indefinite) protects VMs during
+upgrades and outages, but introduces a different problem:
+
+```
+Managed cluster permanently decommissioned or truly dead
+  → Cluster stays selected in Placement forever (tolerated indefinitely)
+    → ApplicationSet keeps generating Applications for a dead cluster
+      → ManifestWorks pile up with no agent to consume them
+        → MulticlusterApplicationSetReport shows permanent degraded state
+          → No alert fires — the dead cluster is silently tolerated
+            → Operators lose visibility into real cluster health
+```
+
+**The tradeoff:**
+
+| tolerationSeconds | Risk if too short | Risk if too long / infinite |
+|-------------------|-------------------|-----------------------------|
+| None (no toleration) | Network blip deletes VMs | — |
+| 1800 (30 min) | Longer outage or slow upgrade deletes VMs | — |
+| 14400 (4 hours) | — | Dead cluster hidden for 4 hours |
+| No timeout (infinite) | — | Dead clusters never cleaned up, silent failures accumulate |
+
+**Recommendation:** Use a timeout that covers the longest expected disruption
+(hub upgrade + spoke upgrade can take 2-4 hours), but is not infinite.
+Combined with `preserveResourcesOnDeletion: true` on the child ApplicationSet,
+even if the timeout expires and the Application is removed, the VM stays running.
+
+```
+tolerationSeconds: 14400 (4 hours)
+  + preserveResourcesOnDeletion: true
+  = VM survives even if tolerance expires
+  + dead clusters are eventually cleaned up from Placement
+```
+
 ---
 
 ## Protection Layer 1: preserveResourcesOnDeletion on Root ApplicationSet
@@ -151,8 +198,10 @@ spec:
   tolerations:                                                        # ADD
     - key: cluster.open-cluster-management.io/unreachable             # ADD
       operator: Exists                                                # ADD
+      tolerationSeconds: 14400                                        # ADD — 4 hours, covers upgrade windows
     - key: cluster.open-cluster-management.io/unavailable             # ADD
       operator: Exists                                                # ADD
+      tolerationSeconds: 14400                                        # ADD — 4 hours, covers upgrade windows
   predicates:
     - requiredClusterSelector:
         labelSelector:
@@ -167,8 +216,19 @@ spec:
                 - local-cluster
 ```
 
-**Note:** No `tolerationSeconds` is set — the cluster stays selected indefinitely.
-Add `tolerationSeconds: 3600` if you want to de-select after 1 hour of downtime.
+**Why 14400 seconds (4 hours)?** A full OpenShift upgrade cycle (hub + spoke) can take
+2-4 hours. Setting the timeout to 4 hours covers this window. After 4 hours, if the
+cluster is still unreachable, the Placement de-selects it — but `preserveResourcesOnDeletion`
+on the child ApplicationSet (Layer 2) ensures the VM keeps running regardless.
+
+**Why not infinite?** Indefinite tolerations hide permanently dead clusters. You lose
+visibility into real cluster health, ManifestWorks accumulate for non-existent agents,
+and the MulticlusterApplicationSetReport shows permanent degraded state with no alert.
+
+**The safety net:** Even if the toleration expires and the Application is removed,
+`preserveResourcesOnDeletion: true` (Layer 2) prevents the VM from being deleted.
+The two layers work together: tolerations buy time, preserveResourcesOnDeletion
+guarantees the VM survives no matter what.
 
 ---
 
@@ -347,7 +407,7 @@ spec:
 |-------|------|-----------------|---------------|
 | 1 | `preserveResourcesOnDeletion` on root | Root AppSet deletion cascade | Instant (resources left in place) |
 | 2 | `preserveResourcesOnDeletion` + `prune: false` on child | Child AppSet deletion cascade + Git removal | Instant (VM never touched) |
-| 3 | Placement tolerations | Cluster unreachable/unavailable | Instant (cluster stays selected) |
+| 3 | Placement tolerations (4h timeout) | Cluster unreachable/unavailable + hub upgrade | Instant (cluster stays selected for 4h, then Layer 2 takes over) |
 | 4 | `Delete=false` on VM | ArgoCD prune/sync deleting VM | Instant (ArgoCD skips deletion) |
 | 5 | ValidatingAdmissionPolicy on namespace | `oc delete ns virt-demo` | Instant (API rejects the call) |
 | 6 | ValidatingAdmissionPolicy on VM | `oc delete vm` by any user | Instant (API rejects the call) |
