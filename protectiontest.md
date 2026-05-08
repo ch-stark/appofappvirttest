@@ -247,9 +247,24 @@ guarantees the VM survives no matter what.
 
 ---
 
-## Protection Layer 4: Block Namespace Deletion (ValidatingAdmissionPolicy)
+## Protection Layer 4: Block All Deletions in the VM Namespace (ValidatingAdmissionPolicy)
 
-**Protects against:** `oc delete ns virt-demo` cascade-deleting all resources including VMs
+**Protects against:** Deletion of the namespace, the VM, or any of its related resources
+
+A VM depends on many related resources. Protecting only the VM itself is not enough:
+
+| Resource | What happens if deleted |
+|----------|----------------------|
+| **Namespace** | Kubernetes garbage-collects everything — VM, PVCs, Secrets, all gone |
+| **PersistentVolumeClaim / DataVolume** | VM loses its disk — data gone, VM crashes or fails to start |
+| **Secret** | VM loses SSH keys, cloud-init userdata, or TLS certs |
+| **ConfigMap** | VM loses configuration data |
+| **Service / Route** | VM becomes unreachable over the network |
+| **NetworkAttachmentDefinition** | VM loses secondary network interfaces |
+| **VirtualMachineInstancetype / Preference** | New VMs can't be created with the same profile |
+
+A single policy that blocks ALL deletions in the namespace is simpler and more
+comprehensive than individual policies per resource type.
 
 **Requires:** OpenShift 4.15+ (ValidatingAdmissionPolicy GA)
 **Deploy to:** each managed cluster (directly or via ACM Policy)
@@ -258,74 +273,46 @@ guarantees the VM survives no matter what.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
-  name: deny-virt-namespace-deletion
+  name: deny-virt-demo-deletions
 spec:
   failurePolicy: Fail
   matchConstraints:
     resourceRules:
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        resources: ["namespaces"]
+      - apiGroups: ["*"]
+        apiVersions: ["*"]
+        resources: ["*"]
         operations: ["DELETE"]
   matchConditions:
-    - name: only-virt-demo
-      expression: "object.metadata.name == 'virt-demo'"
-  validations:
-    - expression: "false"
-      message: >-
-        Deletion of namespace 'virt-demo' is blocked to protect VirtualMachines.
-        Remove this policy first if deletion is intentional.
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicyBinding
-metadata:
-  name: deny-virt-namespace-deletion-binding
-spec:
-  policyName: deny-virt-namespace-deletion
-  validationActions:
-    - Deny
-```
-
----
-
-## Protection Layer 5: Block Direct VM Deletion (ValidatingAdmissionPolicy)
-
-**Protects against:** `oc delete vm fedora-gitops-demo -n virt-demo` by any user
-
-**Requires:** OpenShift 4.15+ (ValidatingAdmissionPolicy GA)
-**Deploy to:** each managed cluster
-
-```yaml
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicy
-metadata:
-  name: deny-vm-deletion
-spec:
-  failurePolicy: Fail
-  matchConstraints:
-    resourceRules:
-      - apiGroups: ["kubevirt.io"]
-        apiVersions: ["v1"]
-        resources: ["virtualmachines"]
-        operations: ["DELETE"]
-  matchConditions:
-    - name: only-protected-namespaces
-      expression: "object.metadata.namespace == 'virt-demo'"
+    - name: only-virt-demo-namespace
+      expression: >-
+        (has(object.metadata.namespace) && object.metadata.namespace == 'virt-demo')
+        || (object.kind == 'Namespace' && object.metadata.name == 'virt-demo')
   validations:
     - expression: "request.userInfo.username == 'system:admin'"
       message: >-
-        VirtualMachine deletion in namespace 'virt-demo' is blocked.
-        Contact the platform team to remove this protection if intentional.
+        All deletions in namespace 'virt-demo' are blocked to protect
+        VirtualMachines and their related resources. Only system:admin
+        can delete resources here. Contact the platform team if intentional.
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
 metadata:
-  name: deny-vm-deletion-binding
+  name: deny-virt-demo-deletions-binding
 spec:
-  policyName: deny-vm-deletion
+  policyName: deny-virt-demo-deletions
   validationActions:
     - Deny
 ```
+
+This single policy blocks:
+- `oc delete ns virt-demo` — namespace deletion (cascade protection)
+- `oc delete vm <name> -n virt-demo` — direct VM deletion
+- `oc delete pvc <name> -n virt-demo` — disk storage deletion
+- `oc delete secret <name> -n virt-demo` — credential/key deletion
+- Any other resource deletion in the namespace
+
+Only `system:admin` can bypass. Adjust the expression to allow specific
+ServiceAccounts if needed (e.g., ArgoCD for managed sync operations).
 
 ---
 
@@ -336,9 +323,8 @@ spec:
 | 1 | `preserveResourcesOnDeletion` on root (both AppSet-level + template-level) | Root AppSet deletion cascade | Instant (Applications + resources left in place) |
 | 2 | `preserveResourcesOnDeletion` on child (both levels) + `prune: false` | Child AppSet deletion cascade + Git removal | Instant (Applications + VMs left in place) |
 | 3 | Placement tolerations (4h timeout) | Cluster unreachable/unavailable + hub upgrade | Instant (cluster stays selected for 4h, then Layer 2 takes over) |
-| 4 | ValidatingAdmissionPolicy on namespace | `oc delete ns virt-demo` | Instant (API rejects the call) |
-| 5 | ValidatingAdmissionPolicy on VM | `oc delete vm` by any user | Instant (API rejects the call) |
+| 4 | ValidatingAdmissionPolicy on entire namespace | `oc delete` of namespace, VM, PVC, Secret, or any resource | Instant (API rejects the call) |
 
 **Recommended minimum:** Layers 1 + 2 + 3 (ArgoCD/Placement level, no extra operators needed).
 
-**Full protection:** All 5 layers for defense in depth.
+**Full protection:** All 4 layers for defense in depth.
