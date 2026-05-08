@@ -86,6 +86,9 @@ tolerationSeconds: 14400 (4 hours)
 
 **What to change in `root-applicationset.yaml`:**
 
+The root ApplicationSet now uses `clusterDecisionResource` with a Placement targeting
+`local-cluster`. Add `preserveResourcesOnDeletion` to the syncPolicy:
+
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -94,16 +97,18 @@ metadata:
   namespace: openshift-gitops
 spec:
   generators:
-    - list:
-        elements:
-          - cluster: local-cluster
-            url: https://kubernetes.default.svc
+    - clusterDecisionResource:
+        configMapRef: ocm-placement-generator
+        labelSelector:
+          matchLabels:
+            cluster.open-cluster-management.io/placement: hub-local-cluster
+        requeueAfterSeconds: 30
   preservedFields:                          # ADD
     annotations:                            # ADD
       - argocd.argoproj.io/refresh          # ADD
   template:
     metadata:
-      name: 'virt-child-appset-{{cluster}}'
+      name: 'virt-child-appset-{{name}}'
     spec:
       project: default
       source:
@@ -112,7 +117,7 @@ spec:
         path: child-appset
       destination:
         namespace: openshift-gitops
-        server: '{{url}}'
+        server: 'https://kubernetes.default.svc'
       syncPolicy:
         automated:
           prune: true

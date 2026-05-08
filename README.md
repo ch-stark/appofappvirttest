@@ -12,8 +12,9 @@ This tutorial demonstrates an **App-of-Apps pattern** using Red Hat Advanced Clu
 │  │  Root ApplicationSet │────▶│  ArgoCD Application              │  │
 │  │  (virt-root-appset)  │     │  (virt-child-appset-local-cluster│  │
 │  │                      │     │   syncs child-appset/ directory) │  │
-│  │  Generator: List     │     └──────────────┬───────────────────┘  │
-│  │  Target: local-cluster│                   │                      │
+│  │  Generator:          │     └──────────────┬───────────────────┘  │
+│  │   clusterDecision    │                    │                      │
+│  │   (hub-local-cluster)│                    │                      │
 │  └──────────────────────┘                    │ deploys              │
 │                                              ▼                      │
 │  ┌────────────────────────────────────────────────────────────────┐  │
@@ -49,7 +50,10 @@ This tutorial demonstrates an **App-of-Apps pattern** using Red Hat Advanced Clu
 ```
 appofappvirttest/
 ├── README.md
-├── root-applicationset.yaml        # 1. Root AppSet (apply manually to hub)
+├── root-applicationset.yaml        # 1. Apply manually to hub (includes
+│                                   #    ManagedClusterSetBinding, Placement
+│                                   #    for local-cluster, GitOpsCluster, and
+│                                   #    Root ApplicationSet with clusterDecision)
 ├── child-appset/                   # 2. Synced to hub by root AppSet
 │   ├── managedclustersetbinding.yaml
 │   ├── placement.yaml
@@ -91,9 +95,12 @@ metadata:
 EOF
 ```
 
-Add your managed cluster to the set:
+Add `local-cluster` and your managed cluster(s) to the set:
 
 ```bash
+oc label managedcluster local-cluster \
+  cluster.open-cluster-management.io/clusterset=all-openshift-clusters --overwrite
+
 oc label managedcluster <managed-cluster-name> \
   cluster.open-cluster-management.io/clusterset=all-openshift-clusters --overwrite
 ```
@@ -127,21 +134,29 @@ oc get managedclusters -l cluster.open-cluster-management.io/clusterset=all-open
 
 ### Step 2: Apply the Root ApplicationSet to the Hub
 
-The root ApplicationSet uses a **List generator** targeting `local-cluster`. It creates a single ArgoCD Application that syncs the `child-appset/` directory to the hub.
+The root ApplicationSet file contains four resources that are applied together:
+1. **ManagedClusterSetBinding** — binds `all-openshift-clusters` to the `openshift-gitops` namespace
+2. **Placement** (`hub-local-cluster`) — selects only `local-cluster` via `clusterDecisionResource`
+3. **GitOpsCluster** — registers `local-cluster` with the ArgoCD instance
+4. **Root ApplicationSet** — uses `clusterDecisionResource` generator with the `hub-local-cluster` Placement
 
 ```bash
 oc apply -f root-applicationset.yaml
 ```
 
 This will:
+- Create a Placement decision targeting `local-cluster`
 - Create an ArgoCD Application named `virt-child-appset-local-cluster`
 - Sync the contents of `child-appset/` to the `openshift-gitops` namespace on the hub
 
-### Step 3: Verify the Child Resources
+### Step 3: Verify the Root Resources and Child Resources
 
-After the root ApplicationSet syncs, the following resources are created on the hub:
+After applying, verify the root Placement decision and then the synced child resources:
 
 ```bash
+# Verify the root Placement selected local-cluster
+oc get placementdecisions -n openshift-gitops -l cluster.open-cluster-management.io/placement=hub-local-cluster
+
 # Verify the root ApplicationSet created the ArgoCD Application
 oc get applicationsets -n openshift-gitops
 oc get applications -n openshift-gitops
@@ -201,17 +216,21 @@ Default credentials: `fedora` / `fedora`
 
 ## How It Works
 
-### Root ApplicationSet (Push Model to Hub)
+### Root ApplicationSet (clusterDecisionResource to Hub)
 
 ```
 root-applicationset.yaml
     │
-    ├── Generator: List [ local-cluster ]
-    ├── Target: https://kubernetes.default.svc (hub itself)
-    └── Source: child-appset/ directory in this repo
+    ├── ManagedClusterSetBinding (all-openshift-clusters → openshift-gitops)
+    ├── Placement: hub-local-cluster (selects only local-cluster)
+    ├── GitOpsCluster: gitops-cluster-hub (registers local-cluster to ArgoCD)
+    └── ApplicationSet: virt-root-appset
+        ├── Generator: clusterDecisionResource (OCM Placement: hub-local-cluster)
+        ├── Target: https://kubernetes.default.svc (hub itself)
+        └── Source: child-appset/ directory in this repo
 ```
 
-The root ApplicationSet is the only resource you manually apply. It uses a simple **List generator** with a single entry (`local-cluster`) to create one ArgoCD Application on the hub. This Application syncs the `child-appset/` directory, deploying the child ApplicationSet and its supporting resources.
+The root ApplicationSet uses a **clusterDecisionResource generator** referencing the `hub-local-cluster` Placement. This is consistent with the ACM pattern — both root and child use OCM Placement-based generators rather than mixing List and clusterDecision generators. The Placement selects only `local-cluster`, so one ArgoCD Application is created on the hub. This Application syncs the `child-appset/` directory, deploying the child ApplicationSet and its supporting resources.
 
 ### Child ApplicationSet (Pull Model to Managed Clusters)
 
@@ -302,6 +321,13 @@ Add additional manifests (Services, Routes, etc.) to the `vm-workload/` director
 ### Root ApplicationSet not syncing
 
 ```bash
+# Check the root Placement is producing a decision
+oc get placementdecisions -n openshift-gitops -l cluster.open-cluster-management.io/placement=hub-local-cluster -o yaml
+
+# Verify the OCM placement generator ConfigMap exists
+oc get configmap ocm-placement-generator -n openshift-gitops
+
+# Check the ApplicationSet and Application status
 oc get applicationset virt-root-appset -n openshift-gitops -o yaml
 oc get application virt-child-appset-local-cluster -n openshift-gitops -o yaml
 oc logs deployment/openshift-gitops-server -n openshift-gitops
