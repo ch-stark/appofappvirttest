@@ -1,0 +1,48 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: fedora-gitops-demo
+  namespace: virt-demo
+  labels:
+    app: fedora-gitops-demo
+    app.kubernetes.io/managed-by: argocd
+spec:
+  running: true
+  template:
+    metadata:
+      labels:
+        kubevirt.io/vm: fedora-gitops-demo
+    spec:
+      domain:
+        cpu:
+          cores: 1
+        devices:
+          disks:
+            - disk:
+                bus: virtio
+              name: containerdisk
+            - disk:
+                bus: virtio
+              name: cloudinitdisk
+          interfaces:
+            - masquerade: {}
+              name: default
+        resources:
+          requests:
+            memory: 1Gi
+      networks:
+        - name: default
+          pod: {}
+      terminationGracePeriodSeconds: 180
+      volumes:
+        - containerDisk:
+            image: quay.io/containerdisks/fedora:latest
+          name: containerdisk
+        - cloudInitNoCloud:
+            userData: |
+              #cloud-config
+              password: fedora
+              chpasswd:
+                expire: false
+              ssh_pwauth: true
+          name: cloudinitdisk

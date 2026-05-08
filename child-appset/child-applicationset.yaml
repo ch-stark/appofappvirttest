@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: virt-vm-appset
+  namespace: openshift-gitops
+spec:
+  generators:
+    - clusterDecisionResource:
+        configMapRef: ocm-placement-generator
+        labelSelector:
+          matchLabels:
+            cluster.open-cluster-management.io/placement: vm-managed-clusters
+        requeueAfterSeconds: 30
+  template:
+    metadata:
+      name: 'virt-vm-{{name}}'
+      labels:
+        apps.open-cluster-management.io/pull-to-ocm-managed-cluster: 'true'
+      annotations:
+        argocd.argoproj.io/skip-reconcile: 'true'
+        apps.open-cluster-management.io/ocm-managed-cluster: '{{name}}'
+        apps.open-cluster-management.io/ocm-managed-cluster-app-namespace: openshift-gitops
+    spec:
+      project: default
+      source:
+        repoURL: 'https://github.com/ch-stark/appofappvirttest.git'
+        targetRevision: main
+        path: vm-workload
+      destination:
+        namespace: virt-demo
+        server: 'https://kubernetes.default.svc'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
