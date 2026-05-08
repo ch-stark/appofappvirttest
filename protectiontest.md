@@ -113,9 +113,6 @@ spec:
         requeueAfterSeconds: 30
   syncPolicy:
     preserveResourcesOnDeletion: true       # ADD — generated Applications survive AppSet deletion
-  preservedFields:                          # ADD
-    annotations:                            # ADD
-      - argocd.argoproj.io/refresh          # ADD
   template:
     metadata:
       name: 'virt-child-appset-{{name}}'
@@ -167,9 +164,6 @@ spec:
         requeueAfterSeconds: 30
   syncPolicy:
     preserveResourcesOnDeletion: true       # ADD — generated Applications survive AppSet deletion
-  preservedFields:                          # ADD
-    annotations:                            # ADD
-      - argocd.argoproj.io/refresh          # ADD
   template:
     metadata:
       name: 'virt-vm-{{name}}'
