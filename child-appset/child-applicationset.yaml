@@ -11,6 +11,8 @@ spec:
           matchLabels:
             cluster.open-cluster-management.io/placement: vm-managed-clusters
         requeueAfterSeconds: 30
+  syncPolicy:
+    preserveResourcesOnDeletion: true
   template:
     metadata:
       name: 'virt-vm-{{name}}'

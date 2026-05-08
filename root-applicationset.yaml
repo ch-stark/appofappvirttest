@@ -53,6 +53,8 @@ spec:
           matchLabels:
             cluster.open-cluster-management.io/placement: hub-local-cluster
         requeueAfterSeconds: 30
+  syncPolicy:
+    preserveResourcesOnDeletion: true
   template:
     metadata:
       name: 'virt-child-appset-{{name}}'

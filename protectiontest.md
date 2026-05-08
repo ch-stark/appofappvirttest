@@ -84,10 +84,18 @@ tolerationSeconds: 14400 (4 hours)
 
 **Protects against:** Root ApplicationSet deletion cascading to child resources
 
-**What to change in `root-applicationset.yaml`:**
+There are **two levels** of `preserveResourcesOnDeletion` and both are needed:
 
-The root ApplicationSet now uses `clusterDecisionResource` with a Placement targeting
-`local-cluster`. Add `preserveResourcesOnDeletion` to the syncPolicy:
+| Level | Location | What it preserves |
+|-------|----------|-------------------|
+| ApplicationSet-level | `spec.syncPolicy.preserveResourcesOnDeletion` | Generated **Applications** survive when the **ApplicationSet** is deleted |
+| Template-level | `spec.template.spec.syncPolicy.preserveResourcesOnDeletion` | Managed **resources** survive when the **Application** is deleted |
+
+Without the ApplicationSet-level setting, deleting the ApplicationSet still deletes all
+generated Applications — even if the template-level setting would have kept the resources.
+The cascade never reaches the template-level check because the Applications are gone first.
+
+**What to change in `root-applicationset.yaml`:**
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -103,6 +111,8 @@ spec:
           matchLabels:
             cluster.open-cluster-management.io/placement: hub-local-cluster
         requeueAfterSeconds: 30
+  syncPolicy:
+    preserveResourcesOnDeletion: true       # ADD — generated Applications survive AppSet deletion
   preservedFields:                          # ADD
     annotations:                            # ADD
       - argocd.argoproj.io/refresh          # ADD
@@ -124,7 +134,7 @@ spec:
           selfHeal: true
         syncOptions:
           - CreateNamespace=true
-        preserveResourcesOnDeletion: true   # ADD — child resources survive app deletion
+        preserveResourcesOnDeletion: true   # ADD — child resources survive Application deletion
 ```
 
 ---
@@ -134,6 +144,10 @@ spec:
 **Protects against:**
 - Child ApplicationSet deletion cascading to VMs on managed clusters
 - VM manifest removed from Git triggering VM deletion
+
+Same two-level pattern as Layer 1:
+- **ApplicationSet-level:** `spec.syncPolicy.preserveResourcesOnDeletion` — generated Applications survive child AppSet deletion
+- **Template-level:** `spec.template.spec.syncPolicy.preserveResourcesOnDeletion` — VMs survive Application deletion
 
 **What to change in `child-appset/child-applicationset.yaml`:**
 
@@ -151,6 +165,8 @@ spec:
           matchLabels:
             cluster.open-cluster-management.io/placement: vm-managed-clusters
         requeueAfterSeconds: 30
+  syncPolicy:
+    preserveResourcesOnDeletion: true       # ADD — generated Applications survive AppSet deletion
   preservedFields:                          # ADD
     annotations:                            # ADD
       - argocd.argoproj.io/refresh          # ADD
@@ -178,7 +194,7 @@ spec:
           selfHeal: true
         syncOptions:
           - CreateNamespace=true
-        preserveResourcesOnDeletion: true   # ADD — VM survives app deletion
+        preserveResourcesOnDeletion: true   # ADD — VMs survive Application deletion
 ```
 
 ---
@@ -350,8 +366,8 @@ spec:
 
 | Layer | What | Protects Against | Recovery Time |
 |-------|------|-----------------|---------------|
-| 1 | `preserveResourcesOnDeletion` on root | Root AppSet deletion cascade | Instant (resources left in place) |
-| 2 | `preserveResourcesOnDeletion` + `prune: false` on child | Child AppSet deletion cascade + Git removal | Instant (VM never touched) |
+| 1 | `preserveResourcesOnDeletion` on root (both AppSet-level + template-level) | Root AppSet deletion cascade | Instant (Applications + resources left in place) |
+| 2 | `preserveResourcesOnDeletion` on child (both levels) + `prune: false` | Child AppSet deletion cascade + Git removal | Instant (Applications + VMs left in place) |
 | 3 | Placement tolerations (4h timeout) | Cluster unreachable/unavailable + hub upgrade | Instant (cluster stays selected for 4h, then Layer 2 takes over) |
 | 4 | `Delete=false` on VM | ArgoCD prune/sync deleting VM | Instant (ArgoCD skips deletion) |
 | 5 | ValidatingAdmissionPolicy on namespace | `oc delete ns virt-demo` | Instant (API rejects the call) |
