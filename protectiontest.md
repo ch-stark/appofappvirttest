@@ -62,20 +62,23 @@ Managed cluster permanently decommissioned or truly dead
 | tolerationSeconds | Risk if too short | Risk if too long / infinite |
 |-------------------|-------------------|-----------------------------|
 | None (no toleration) | Network blip deletes VMs | — |
-| 1800 (30 min) | Longer outage or slow upgrade deletes VMs | — |
+| 600 (10 min) | Longer outage triggers de-selection | — |
 | 14400 (4 hours) | — | Dead cluster hidden for 4 hours |
 | No timeout (infinite) | — | Dead clusters never cleaned up, silent failures accumulate |
 
-**Recommendation:** Use a timeout that covers the longest expected disruption
-(hub upgrade + spoke upgrade can take 2-4 hours), but is not infinite.
-Combined with `preserveResourcesOnDeletion: true` on the child ApplicationSet,
-even if the timeout expires and the Application is removed, the VM stays running.
+**Approach:** Use different strategies for root vs child Placement:
+- **Root (hub):** Infinite tolerations — the hub is the control plane, de-selecting it
+  helps nothing since all controllers run there.
+- **Child (managed clusters):** Short timeout (10 minutes) — surfaces dead clusters
+  quickly for operator visibility. `preserveResourcesOnDeletion: true` on the child
+  ApplicationSet guarantees VMs survive even after de-selection.
 
 ```
-tolerationSeconds: 14400 (4 hours)
+Root: no tolerationSeconds (infinite) — hub must never be de-selected
+Child: tolerationSeconds: 600 (10 min)
   + preserveResourcesOnDeletion: true
   = VM survives even if tolerance expires
-  + dead clusters are eventually cleaned up from Placement
+  + dead clusters are surfaced quickly
 ```
 
 ---
@@ -201,7 +204,38 @@ Without tolerations, when a managed cluster goes temporarily unreachable, ACM ta
 The Placement de-selects the cluster, the ApplicationSet removes the Application, and the
 VM gets cascade-deleted — even though the VM is still running fine on the managed cluster.
 
-**What to change in `child-appset/placement.yaml`:**
+The root and child Placements use **different toleration strategies**:
+
+| Placement | tolerationSeconds | Why |
+|-----------|-------------------|-----|
+| `hub-local-cluster` (root) | **No timeout (infinite)** | The hub is the control plane — it must never be de-selected. If the hub is unreachable, nothing works anyway. |
+| `vm-managed-clusters` (child) | **600 (10 minutes)** | Short timeout surfaces dead managed clusters quickly while still covering brief network blips. `preserveResourcesOnDeletion` (Layer 2) ensures VMs survive even after de-selection. |
+
+**Root Placement** (`root-applicationset.yaml` — already set, no timeout):
+
+```yaml
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: hub-local-cluster
+  namespace: openshift-gitops
+spec:
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: name
+              operator: In
+              values:
+                - local-cluster
+```
+
+**Child Placement** (`child-appset/placement.yaml` — 10 minute timeout):
 
 ```yaml
 apiVersion: cluster.open-cluster-management.io/v1beta1
@@ -213,10 +247,10 @@ spec:
   tolerations:                                                        # ADD
     - key: cluster.open-cluster-management.io/unreachable             # ADD
       operator: Exists                                                # ADD
-      tolerationSeconds: 14400                                        # ADD — 4 hours, covers upgrade windows
+      tolerationSeconds: 600                                          # ADD — 10 minutes
     - key: cluster.open-cluster-management.io/unavailable             # ADD
       operator: Exists                                                # ADD
-      tolerationSeconds: 14400                                        # ADD — 4 hours, covers upgrade windows
+      tolerationSeconds: 600                                          # ADD — 10 minutes
   predicates:
     - requiredClusterSelector:
         labelSelector:
@@ -231,18 +265,14 @@ spec:
                 - local-cluster
 ```
 
-**Why 14400 seconds (4 hours)?** A full OpenShift upgrade cycle (hub + spoke) can take
-2-4 hours. Setting the timeout to 4 hours covers this window. After 4 hours, if the
-cluster is still unreachable, the Placement de-selects it — but `preserveResourcesOnDeletion`
-on the child ApplicationSet (Layer 2) ensures the VM keeps running regardless.
+**Why 10 minutes for the child?** It's long enough to ride out brief network blips and
+rolling restarts, but short enough that a truly dead cluster is de-selected quickly —
+giving operators fast visibility into cluster health problems via the Placement status
+and MulticlusterApplicationSetReport.
 
-**Why not infinite?** Indefinite tolerations hide permanently dead clusters. You lose
-visibility into real cluster health, ManifestWorks accumulate for non-existent agents,
-and the MulticlusterApplicationSetReport shows permanent degraded state with no alert.
-
-**The safety net:** Even if the toleration expires and the Application is removed,
+**The safety net:** Even after the 10-minute timeout expires and the Application is removed,
 `preserveResourcesOnDeletion: true` (Layer 2) prevents the VM from being deleted.
-The two layers work together: tolerations buy time, preserveResourcesOnDeletion
+The two layers work together: tolerations prevent unnecessary churn, preserveResourcesOnDeletion
 guarantees the VM survives no matter what.
 
 ---
@@ -322,7 +352,7 @@ ServiceAccounts if needed (e.g., ArgoCD for managed sync operations).
 |-------|------|-----------------|---------------|
 | 1 | `preserveResourcesOnDeletion` on root (both AppSet-level + template-level) | Root AppSet deletion cascade | Instant (Applications + resources left in place) |
 | 2 | `preserveResourcesOnDeletion` on child (both levels) + `prune: false` | Child AppSet deletion cascade + Git removal | Instant (Applications + VMs left in place) |
-| 3 | Placement tolerations (4h timeout) | Cluster unreachable/unavailable + hub upgrade | Instant (cluster stays selected for 4h, then Layer 2 takes over) |
+| 3 | Placement tolerations (root: infinite, child: 10min) | Cluster unreachable/unavailable | Instant (child stays selected for 10min, then Layer 2 takes over) |
 | 4 | ValidatingAdmissionPolicy on entire namespace | `oc delete` of namespace, VM, PVC, Secret, or any resource | Instant (API rejects the call) |
 
 **Recommended minimum:** Layers 1 + 2 + 3 (ArgoCD/Placement level, no extra operators needed).
