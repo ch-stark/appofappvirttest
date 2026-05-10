@@ -6,8 +6,6 @@ In the Red Hat Advanced Cluster Management (RHACM) and Argo CD pull model, the H
  
 To prevent a cascade deletion during a Hub failure or upgrade, a multi-layered defense strategy is required—one that prioritizes architectural stability over reactive automation.
  
----
- 
 ## Layer 1: Ensuring Stability in the Hub-to-Cluster Relationship
  
 In the pull model, the Hub uses `Placements` to determine which managed clusters should receive an `Application`.
@@ -43,8 +41,6 @@ By omitting a timeout, the Hub maintains its source of truth indefinitely.
  
 During a Disaster Recovery restore, the Hub may require time to re-establish inventory and cluster connectivity. This configuration prevents it from issuing mass-deletion commands during that critical rediscovery phase.
  
----
- 
 ## Layer 2: Breaking the Cascade (Delete Protection)
  
 The ultimate safety net is decoupling the lifecycle of the Hub's configuration from the lifecycle of the actual workloads.
@@ -67,7 +63,6 @@ This is arguably the single most effective protection against catastrophic workl
 - Hub upgrades
 - DR failovers
 - Accidental `ApplicationSet` removal
----
  
 ## Layer 3: The Passive Hub "Warm" Standby
  
@@ -89,7 +84,6 @@ While the ACM Backup Operator automatically handles many RHACM resources, severa
 | Repository & Cluster Secrets | Manual | Label with `cluster.open-cluster-management.io/backup=argocd` |
 | Argo CD ConfigMaps | Manual | Label with `cluster.open-cluster-management.io/backup=argocd` |
  
----
  
 ## Layer 4: Preventing Split-Brain via Governance
  
@@ -139,7 +133,6 @@ spec:
             {{- end }}
 ```
 
-
 This effectively "locks" the secondary Hub until administrators intentionally promote it during failover.
  
 ### The Failover Sequence
@@ -172,7 +165,6 @@ Once the following reconnect:
 - `GitOpsCluster` resources
 the Argo CD dashboards will naturally repopulate without manual intervention.
  
----
  
 ## Summary
  
