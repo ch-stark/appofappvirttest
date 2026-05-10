@@ -103,7 +103,7 @@ metadata:
   namespace: open-cluster-management
 spec:
   disabled: false
-  remediationAction: enforce  # This will actively overwrite projects to stay locked
+  remediationAction: enforce
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -114,13 +114,36 @@ spec:
           remediationAction: enforce
           severity: high
           object-templates-raw: |
-            {{- range (lookup "argoproj.io/v1alpha1" "AppProject" "openshift-gitops" "").items }}
+            {{- /* 1. Extract the label from the ManagedCluster */ -}}
+            {{- $isRestore := index .ManagedClusterLabels "restore" | default "false" -}}
+            
+            {{- /* 2. Iterate through AppProjects */ -}}
+            {{- range $appProj := (lookup "argoproj.io/v1alpha1" "AppProject" "openshift-gitops" "").items }}
+            
+            {{- if eq $isRestore "true" }}
+            {{- /* 3a. RESTORE MODE: Actively remove the syncWindows field */ -}}
+            {{- /* Strip the syncWindows key from the existing spec to clear the block */ -}}
+            {{- $cleanSpec := omit $appProj.spec "syncWindows" }}
+            
+            - complianceType: mustonlyhave
+              metadataComplianceType: musthave
+              objectDefinition:
+                apiVersion: argoproj.io/v1alpha1
+                kind: AppProject
+                metadata:
+                  name: {{ $appProj.metadata.name }}
+                  namespace: openshift-gitops
+                spec:
+                  {{- $cleanSpec | toYaml | nindent 18 }}
+                  
+            {{- else }}
+            {{- /* 3b. DENY MODE: Actively enforce the deny window */ -}}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: argoproj.io/v1alpha1
                 kind: AppProject
                 metadata:
-                  name: {{ .metadata.name }}
+                  name: {{ $appProj.metadata.name }}
                   namespace: openshift-gitops
                 spec:
                   syncWindows:
@@ -130,6 +153,8 @@ spec:
                       applications: ["*"]
                       namespaces: ["*"]
                       clusters: ["*"]
+            {{- end }}
+            
             {{- end }}
 ```
 
