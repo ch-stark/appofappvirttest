@@ -96,7 +96,50 @@ While the ACM Backup Operator automatically handles many RHACM resources, severa
 In an Active-Passive topology, preventing both Hubs from simultaneously managing clusters is critical.
  
 A recommended approach is to enforce a **deny SyncWindow** policy on the Passive Hub using RHACM Governance Policies.
- 
+
+
+The "Safety Switch": Global Deny Policy
+This RHACM Governance policy uses a ConfigurationPolicy to dynamically find every AppProject on the passive Hub and inject a 24/7 deny window.
+
+```yaml
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: block-argocd-syncs-passive-hub
+  namespace: open-cluster-management
+spec:
+  disabled: false
+  remediationAction: enforce  # This will actively overwrite projects to stay locked
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: deny-argocd-syncwindow
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            {{- range (lookup "argoproj.io/v1alpha1" "AppProject" "openshift-gitops" "").items }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: argoproj.io/v1alpha1
+                kind: AppProject
+                metadata:
+                  name: {{ .metadata.name }}
+                  namespace: openshift-gitops
+                spec:
+                  syncWindows:
+                    - kind: deny
+                      schedule: "* * * * *"
+                      duration: 24h
+                      applications: ["*"]
+                      namespaces: ["*"]
+                      clusters: ["*"]
+            {{- end }}
+```
+
+
 This effectively "locks" the secondary Hub until administrators intentionally promote it during failover.
  
 ### The Failover Sequence
