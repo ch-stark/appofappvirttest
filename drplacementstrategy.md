@@ -54,9 +54,9 @@ spec:
           matchLabels:
             dr-role: primary
 ```
-
 # Note: tolerations are not defined here. 
-# This ensures the workload stays pinned to the cluster 
-# even if it reports a 'NotReady' or 'Unreachable' status.
-Conclusion
+This ensures the workload stays pinned to the cluster 
+even if it reports a 'NotReady' or 'Unreachable' status.
+
+# Conclusion
 The lack of tolerationSeconds is a deliberate design choice to protect stateful data. It forces a coordinated recovery where storage readiness is guaranteed before the application layer is allowed to restart on a new site.
