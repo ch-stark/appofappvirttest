@@ -7,8 +7,6 @@ This document explains the relationship between Open Cluster Management (OCM/ACM
 It is intended to clarify a common architectural misconception: that adding tolerations
 to a `Placement` resource will interfere with or block DR failover for protected workloads.
 
----
-
 ## Background
 
 When a managed cluster goes offline, OCM automatically applies taints to that cluster:
@@ -21,8 +19,6 @@ any application assigned to the affected cluster. This can cause undesirable "fl
 behaviour — particularly dangerous for stateful workloads backed by replicated storage.
 
 The instinct to add tolerations is correct. The concern that doing so will block DR is not.
-
----
 
 ## How the Orchestration Layers Work
 
@@ -49,8 +45,6 @@ The generic `Placement` controller is effectively bypassed. Changes to toleratio
 placement rules at this point do not influence where or when the workload moves —
 Ramen decides that based on storage readiness and explicit administrator action.
 
----
-
 ## The Role of Tolerations in a DR Context
 
 Tolerations serve a specific and important purpose in DR-protected environments:
@@ -69,7 +63,6 @@ This is the intended behaviour for stateful workloads under asynchronous replica
 > on the secondary site before storage replication has caught up — risking data corruption
 > or a split-brain scenario. Tolerations prevent this race condition.
 
----
 
 ## Recommended Strategy by Workload Type
 
@@ -115,10 +108,7 @@ tolerations:
 
 ---
 
-## Fencing and Manual Intervention
-
-Fencing is **not** an automatic feature of asynchronous Regional DR. In an
-Active/Passive architecture:
+## Manual Intervention
 
 - The primary site is **not** automatically isolated when it becomes unreachable.
 - An administrator must **deliberately** trigger the failover sequence.
