@@ -50,18 +50,22 @@ This tutorial (WIP) demonstrates an **App-of-Apps pattern** using Red Hat Advanc
 ```
 appofappvirttest/
 ├── README.md
-├── root-applicationset.yaml        # 1. Apply manually to hub (includes
-│                                   #    ManagedClusterSetBinding, Placement
-│                                   #    for local-cluster, GitOpsCluster, and
-│                                   #    Root ApplicationSet with clusterDecision)
-├── child-appset/                   # 2. Synced to hub by root AppSet
+├── root-applicationset.yaml          # 1. Apply manually to hub (includes
+│                                     #    ManagedClusterSetBinding, Placement
+│                                     #    for local-cluster, GitOpsCluster, and
+│                                     #    Root ApplicationSet with clusterDecision)
+├── prerequisites/
+│   └── managed-serviceaccount-setup.yaml  # Per-cluster: ManagedClusterAddOn,
+│                                          # ManagedServiceAccount, ClusterPermission
+├── child-appset/                     # 2. Synced to hub by root AppSet
 │   ├── managedclustersetbinding.yaml
 │   ├── placement.yaml
-│   ├── gitopscluster.yaml
-│   └── child-applicationset.yaml   #    Child AppSet (pull model)
-└── vm-workload/                    # 3. Synced to managed clusters by child AppSet
-    ├── namespace.yaml
-    └── virtualmachine.yaml         #    Fedora VM deployed via GitOps
+│   ├── gitopscluster.yaml            #    References managedServiceAccountRef
+│   └── child-applicationset.yaml     #    Child AppSet (pull model)
+├── vm-workload/                      # 3. Synced to managed clusters by child AppSet
+│   ├── namespace.yaml                #    Includes argocd.argoproj.io/managed-by label
+│   └── virtualmachine.yaml           #    Fedora VM deployed via GitOps
+└── protectiontest.md                 # VM deletion protection guide (4 layers)
 ```
 
 ## Prerequisites
@@ -105,9 +109,78 @@ oc label managedcluster <managed-cluster-name> \
   cluster.open-cluster-management.io/clusterset=all-openshift-clusters --overwrite
 ```
 
-### Register Managed Clusters to GitOps
+### Set Up Managed Service Account for Each Managed Cluster
 
-Ensure that the managed clusters are registered with the OpenShift GitOps operator on the hub. RHACM handles this automatically when you create the `GitOpsCluster` resource (included in this repo).
+The GitOpsCluster resource uses a `ManagedServiceAccount` to register managed clusters
+with ArgoCD. Without this, ArgoCD cannot create cluster secrets and the pull model will
+fail with permission errors.
+
+For **each managed cluster**, apply the following on the Hub (replace `MANAGED_CLUSTER_NAME`
+with the actual cluster namespace, e.g. `sno-2-xsr74`):
+
+```bash
+# Step 1: Enable the managed-serviceaccount add-on
+oc apply -f - <<EOF
+apiVersion: addon.open-cluster-management.io/v1alpha1
+kind: ManagedClusterAddOn
+metadata:
+  name: managed-serviceaccount
+  namespace: MANAGED_CLUSTER_NAME
+spec:
+  installNamespace: open-cluster-management-agent-addon
+EOF
+
+# Step 2: Create the ManagedServiceAccount
+oc apply -f - <<EOF
+apiVersion: authentication.open-cluster-management.io/v1alpha1
+kind: ManagedServiceAccount
+metadata:
+  name: argocd-manager
+  namespace: MANAGED_CLUSTER_NAME
+spec:
+  rotation: {}
+EOF
+
+# Step 3: Grant cluster-admin permissions via ClusterPermission
+oc apply -f - <<EOF
+apiVersion: rbac.open-cluster-management.io/v1alpha1
+kind: ClusterPermission
+metadata:
+  name: argocd-manager-permission
+  namespace: MANAGED_CLUSTER_NAME
+spec:
+  clusterRoleBindings:
+    - clusterRoleName: cluster-admin
+      subject:
+        kind: ServiceAccount
+        name: argocd-manager
+        namespace: open-cluster-management-managed-serviceaccount
+EOF
+```
+
+A template YAML with all three resources is available at
+[`prerequisites/managed-serviceaccount-setup.yaml`](prerequisites/managed-serviceaccount-setup.yaml).
+
+The `GitOpsCluster` resource (in `child-appset/gitopscluster.yaml`) references this
+service account via `managedServiceAccountRef: argocd-manager`. When the GitOps cluster
+controller reconciles, it creates cluster secrets using the managed service account token
+instead of the legacy secret method.
+
+### ArgoCD RBAC for VirtualMachine Resources
+
+The default ArgoCD application controller service account
+(`openshift-gitops-argocd-application-controller`) does **not** have permission to create
+`virtualmachines.kubevirt.io` resources. The `virt-demo` namespace includes the label
+`argocd.argoproj.io/managed-by: openshift-gitops` (defined in `vm-workload/namespace.yaml`),
+which triggers the GitOps Operator to automatically generate the localized RBAC permissions
+the controller needs.
+
+If you still encounter permission errors, grant broader access on the managed cluster:
+
+```bash
+oc adm policy add-cluster-role-to-user cluster-admin \
+  system:serviceaccount:openshift-gitops:openshift-gitops-argocd-application-controller
+```
 
 ---
 
@@ -354,6 +427,36 @@ oc get pods -n open-cluster-management | grep pull
 
 # Check ManifestWork on the hub
 oc get manifestwork -A | grep virt
+```
+
+### ArgoCD sync fails with "virtualmachines.kubevirt.io is forbidden"
+
+The ArgoCD application controller SA lacks permissions to create VMs:
+
+```bash
+# Option A: Verify the namespace has the managed-by label (triggers auto-RBAC)
+oc get ns virt-demo -o jsonpath='{.metadata.labels.argocd\.argoproj\.io/managed-by}' --context <managed-cluster-context>
+
+# Option B: Grant cluster-admin directly
+oc adm policy add-cluster-role-to-user cluster-admin \
+  system:serviceaccount:openshift-gitops:openshift-gitops-argocd-application-controller \
+  --context <managed-cluster-context>
+```
+
+### Managed cluster not registered (no cluster secret)
+
+```bash
+# Verify the managed-serviceaccount add-on is available
+oc get managedclusteraddon managed-serviceaccount -n <managed-cluster-name>
+
+# Verify the ManagedServiceAccount exists and has a token
+oc get managedserviceaccount argocd-manager -n <managed-cluster-name> -o yaml
+
+# Verify the ClusterPermission exists
+oc get clusterpermission argocd-manager-permission -n <managed-cluster-name>
+
+# Check GitOpsCluster status
+oc get gitopscluster gitops-cluster-virt -n openshift-gitops -o yaml
 ```
 
 ### VM not starting on managed cluster

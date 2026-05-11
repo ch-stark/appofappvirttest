@@ -7,6 +7,7 @@ spec:
   argoServer:
     cluster: local-cluster
     argoNamespace: openshift-gitops
+  managedServiceAccountRef: argocd-manager
   placementRef:
     kind: Placement
     apiVersion: cluster.open-cluster-management.io/v1beta1
