@@ -1,7 +1,5 @@
 # Architectural Decision Record: ODF Regional-DR Placement Strategy
 
-## Status: Recommended
-
 ## Context
 When deploying stateful applications across multiple OpenShift clusters using **OpenShift Data Foundation (ODF)** and **OpenShift DR (ODR)**, a critical configuration choice must be made regarding how the Control Plane (ACM) reacts to cluster unavailability. 
 
