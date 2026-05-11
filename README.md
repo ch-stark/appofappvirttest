@@ -161,10 +161,17 @@ EOF
 A template YAML with all three resources is available at
 [`prerequisites/managed-serviceaccount-setup.yaml`](prerequisites/managed-serviceaccount-setup.yaml).
 
-The `GitOpsCluster` resource (in `child-appset/gitopscluster.yaml`) references this
-service account via `managedServiceAccountRef: argocd-manager`. When the GitOps cluster
-controller reconciles, it creates cluster secrets using the managed service account token
-instead of the legacy secret method.
+**Step 4** is handled automatically: the `GitOpsCluster` resource (in `child-appset/gitopscluster.yaml`)
+already includes `managedServiceAccountRef: argocd-manager`. When the root ApplicationSet syncs
+this file to the hub, the GitOps cluster controller creates cluster secrets using the managed
+service account token instead of the legacy secret method.
+
+If you have an existing GitOpsCluster that was created without the ref, patch it manually:
+
+```bash
+oc patch gitopscluster gitops-cluster-virt -n openshift-gitops \
+  --type=merge -p '{"spec":{"managedServiceAccountRef":"argocd-manager"}}'
+```
 
 ### ArgoCD RBAC for VirtualMachine Resources
 
