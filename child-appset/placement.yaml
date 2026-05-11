@@ -7,10 +7,8 @@ spec:
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
-      tolerationSeconds: 600
     - key: cluster.open-cluster-management.io/unavailable
       operator: Exists
-      tolerationSeconds: 600
   predicates:
     - requiredClusterSelector:
         labelSelector:
